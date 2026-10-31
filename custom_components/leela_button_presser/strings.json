@@ -8,7 +8,7 @@
       },
       "secret": {
         "title": "Copy your MCP secret",
-        "description": "Endpoint: `<your HA URL>{path}`\n\nBearer secret (shown once more under Configure):\n\n`{secret}`"
+        "description": "Endpoint: your HA address followed by `{path}`\n\nBearer secret (shown once more under Configure):\n\n`{secret}`"
       }
     },
     "abort": { "single_instance_allowed": "Already configured." }
