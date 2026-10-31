@@ -1,0 +1,39 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Leela Button Presser",
+        "description": "Creates an MCP endpoint with its own secret. You choose which entities it may touch on the next screen (Configure).",
+        "data": { "preload_dial_defaults": "Preload the M5 Dial entities (lights, vacuum rooms, egg timer, phone, air sensors)" }
+      },
+      "secret": {
+        "title": "Copy your MCP secret",
+        "description": "Endpoint: `<your HA URL>{path}`\n\nBearer secret (shown once more under Configure):\n\n`{secret}`"
+      }
+    },
+    "abort": { "single_instance_allowed": "Already configured." }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Allowlist",
+        "description": "Only these entities can ever be called. Endpoint: `{path}`. Secret: `{secret}`",
+        "data": {
+          "lights": "Lights (on/off/toggle/brightness)",
+          "buttons": "Buttons / input buttons (press)",
+          "numbers": "Number / input_number dials (set value, within entity min/max)",
+          "timers": "Timers (start)",
+          "vacuum": "Vacuum",
+          "rooms": "Vacuum rooms, one per line: name=segment_id",
+          "sensors": "Extra read-only entities (sensors etc.)",
+          "rate_limit_per_minute": "Max tool calls per minute",
+          "regenerate_secret": "Generate a new secret (invalidates the old one)"
+        }
+      }
+    },
+    "error": {
+      "invalid_rooms": "Use lines like corridor=16 (letters, digits, underscore; numeric segment id).",
+      "rooms_need_vacuum": "Pick a vacuum to use rooms."
+    }
+  }
+}
