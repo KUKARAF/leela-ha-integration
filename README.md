@@ -11,7 +11,8 @@ A Home Assistant custom integration that serves an MCP endpoint (streamable HTTP
    - Lights: `light_on` (optional brightness 1-255), `light_off`, `light_toggle`, `light_set_brightness` (0-255, 0 = off)
    - Buttons / input_button: `button_press`
    - number / input_number: `number_set` (value must be within the entity's own min/max)
-   - Timers: `timer_start`
+   - Timers: `timer_start` (optional `seconds` 1-86400 for a custom length, else the timer's configured duration), `timer_cancel`
+   - Timer label (optional `input_text`): `timer_label_set` (up to 60 chars, empty clears). The label is cleared automatically when an allowlisted timer finishes or is cancelled. Set the label before starting the timer.
    - Vacuum + rooms (`name=segment_id`, one per line): `vacuum_start`, `vacuum_clean_room` (`vacuum.send_command` `app_segment_clean`, repeat 1)
    - Read-only: `get_state` / `list_entities` over lights, numbers, timers, vacuum and any extra sensors (CO2, formaldehyde, ...)
    - Max tool calls per minute (default 30)

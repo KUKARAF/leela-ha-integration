@@ -101,7 +101,7 @@ class Runtime:
 
     async def _execute(self, opts: Options, call: ServiceCall) -> str:
         check_call(opts, call)
-        if call.service == "set_value":
+        if call.service == "set_value" and call.domain in ("number", "input_number"):
             self._check_number_range(call)
         _LOGGER.info("MCP call %s.%s %s", call.domain, call.service, call.data)
         await self.hass.services.async_call(

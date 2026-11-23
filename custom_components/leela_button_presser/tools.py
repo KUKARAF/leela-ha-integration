@@ -20,6 +20,7 @@ from .const import (
     CONF_RATE_LIMIT,
     CONF_ROOMS,
     CONF_SENSORS,
+    CONF_TIMER_LABEL,
     CONF_TIMERS,
     CONF_VACUUM,
     DEFAULT_RATE_LIMIT,
@@ -33,6 +34,10 @@ BUTTON_DOMAINS = ("button", "input_button")
 NUMBER_DOMAINS = ("number", "input_number")
 VACUUM_DOMAINS = ("vacuum",)
 TIMER_DOMAINS = ("timer",)
+TEXT_DOMAINS = ("input_text",)
+DURATION_RE = re.compile(r"^\d{2}:\d{2}:\d{2}$")
+MAX_TIMER_SECONDS = 24 * 3600
+MAX_LABEL_CHARS = 60
 
 # (domain, service) -> data keys that may ever be sent (entity_id always).
 ALLOWED_SERVICES: dict[tuple[str, str], frozenset[str]] = {
@@ -45,7 +50,9 @@ ALLOWED_SERVICES: dict[tuple[str, str], frozenset[str]] = {
     ("input_number", "set_value"): frozenset({"entity_id", "value"}),
     ("vacuum", "start"): frozenset({"entity_id"}),
     ("vacuum", "send_command"): frozenset({"entity_id", "command", "params"}),
-    ("timer", "start"): frozenset({"entity_id"}),
+    ("timer", "start"): frozenset({"entity_id", "duration"}),
+    ("timer", "cancel"): frozenset({"entity_id"}),
+    ("input_text", "set_value"): frozenset({"entity_id", "value"}),
 }
 VACUUM_ROOM_COMMAND = "app_segment_clean"
 
@@ -92,6 +99,13 @@ class Param:
     maximum: float | None = None
 
     def json_schema(self) -> dict[str, Any]:
+        if self.kind == "string":
+            out_s: dict[str, Any] = {"type": "string", "description": self.description}
+            if self.minimum is not None:
+                out_s["minLength"] = int(self.minimum)
+            if self.maximum is not None:
+                out_s["maxLength"] = int(self.maximum)
+            return out_s
         if self.kind == "enum":
             return {
                 "type": "string",
@@ -109,6 +123,17 @@ class Param:
         return out
 
     def coerce(self, value: Any) -> Any:
+        if self.kind == "string":
+            if not isinstance(value, str):
+                raise ToolError(f"'{self.name}' must be text")
+            text = " ".join(value.split())  # one line, no control characters
+            if any(ord(c) < 32 or ord(c) == 127 for c in text):
+                raise ToolError(f"'{self.name}' has invalid characters")
+            if self.minimum is not None and len(text) < self.minimum:
+                raise ToolError(f"'{self.name}' must be at least {int(self.minimum)} characters")
+            if self.maximum is not None and len(text) > self.maximum:
+                raise ToolError(f"'{self.name}' must be at most {int(self.maximum)} characters")
+            return text
         if self.kind == "enum":
             if not isinstance(value, str) or value not in self.choices:
                 raise ToolError(
@@ -181,11 +206,14 @@ class Options:
     vacuum: str | None = None
     rooms: Mapping[str, int] = field(default_factory=dict)
     timers: tuple[str, ...] = ()
+    timer_label: str | None = None
     sensors: tuple[str, ...] = ()
     rate_limit: int = DEFAULT_RATE_LIMIT
 
     def controllable(self) -> set[str]:
         out = {*self.lights, *self.buttons, *self.numbers, *self.timers}
+        if self.timer_label:
+            out.add(self.timer_label)
         if self.vacuum:
             out.add(self.vacuum)
         return out
@@ -196,6 +224,7 @@ class Options:
             *self.lights,
             *self.numbers,
             *self.timers,
+            *([self.timer_label] if self.timer_label else []),
             *([self.vacuum] if self.vacuum else []),
             *self.sensors,
         ):
@@ -250,6 +279,7 @@ def parse_options(raw: Mapping[str, Any]) -> Options:
         rate = int(raw.get(CONF_RATE_LIMIT, DEFAULT_RATE_LIMIT))
     except (TypeError, ValueError):
         rate = DEFAULT_RATE_LIMIT
+    label = _entities(raw.get(CONF_TIMER_LABEL), TEXT_DOMAINS)
     return Options(
         lights=_entities(raw.get(CONF_LIGHTS), LIGHT_DOMAINS),
         buttons=_entities(raw.get(CONF_BUTTONS), BUTTON_DOMAINS),
@@ -257,6 +287,7 @@ def parse_options(raw: Mapping[str, Any]) -> Options:
         vacuum=vac[0] if vac else None,
         rooms=rooms,
         timers=_entities(raw.get(CONF_TIMERS), TIMER_DOMAINS),
+        timer_label=label[0] if label else None,
         sensors=_sensor_list(raw.get(CONF_SENSORS)),
         rate_limit=max(1, min(600, rate)),
     )
@@ -369,14 +400,67 @@ def build_tools(opts: Options) -> dict[str, Tool]:
         )
 
     if opts.timers:
+        timer_param = _entity_param("timer", "Which timer", opts.timers)
+
+        def start_timer(a: dict[str, Any]) -> ServiceCall:
+            data: dict[str, Any] = {"entity_id": a["timer"]}
+            if "seconds" in a:
+                data["duration"] = hms(a["seconds"])
+            return ServiceCall("timer", "start", data)
+
         add(
             Tool(
                 "timer_start",
-                "Start a timer with its configured duration.",
-                (_entity_param("timer", "Which timer", opts.timers),),
-                lambda a: ServiceCall("timer", "start", {"entity_id": a["timer"]}),
+                "Start a timer. Give seconds (1-86400) for a custom length; "
+                "without it the timer's configured duration is used. "
+                "Starting a running timer restarts it with the new length.",
+                (
+                    timer_param,
+                    Param(
+                        "seconds",
+                        "Length in seconds, 1 to 86400",
+                        "int",
+                        False,
+                        minimum=1,
+                        maximum=MAX_TIMER_SECONDS,
+                    ),
+                ),
+                start_timer,
             )
         )
+        add(
+            Tool(
+                "timer_cancel",
+                "Cancel a running timer without ringing.",
+                (timer_param,),
+                lambda a: ServiceCall("timer", "cancel", {"entity_id": a["timer"]}),
+            )
+        )
+        if opts.timer_label:
+            label_entity = opts.timer_label
+            add(
+                Tool(
+                    "timer_label_set",
+                    "Set the short text shown with the timer (empty text clears it). "
+                    "It also clears itself when a timer finishes or is cancelled. "
+                    "Set it before starting the timer.",
+                    (
+                        Param(
+                            "text",
+                            f"Label, up to {MAX_LABEL_CHARS} characters",
+                            "string",
+                            True,
+                            minimum=0,
+                            maximum=MAX_LABEL_CHARS,
+                        ),
+                    ),
+                    lambda a: ServiceCall(
+                        "input_text",
+                        "set_value",
+                        {"entity_id": label_entity, "value": a["text"]},
+                    ),
+                )
+            )
 
     if opts.vacuum:
         vac = opts.vacuum
@@ -431,6 +515,11 @@ def build_tools(opts: Options) -> dict[str, Tool]:
     return tools
 
 
+def hms(seconds: int) -> str:
+    """Seconds -> 'HH:MM:SS' for timer.start's duration."""
+    return f"{seconds // 3600:02d}:{seconds % 3600 // 60:02d}:{seconds % 60:02d}"
+
+
 def check_call(opts: Options, call: ServiceCall) -> None:
     """Final guard before execution. Raises ToolError if not allowlisted."""
     keys = ALLOWED_SERVICES.get((call.domain, call.service))
@@ -460,6 +549,19 @@ def check_call(opts: Options, call: ServiceCall) -> None:
         )
         if not ok:
             raise ToolError("vacuum command not allowed")
+    if call.domain == "timer" and "duration" in call.data:
+        d = call.data["duration"]
+        if not isinstance(d, str) or not DURATION_RE.match(d):
+            raise ToolError("duration must be HH:MM:SS")
+        h, m, sec = (int(x) for x in d.split(":"))
+        if not 1 <= h * 3600 + m * 60 + sec <= MAX_TIMER_SECONDS or m > 59 or sec > 59:
+            raise ToolError("duration out of range")
+    if call.domain == "input_text":
+        value = call.data.get("value")
+        if entity != opts.timer_label:
+            raise ToolError("text entity not allowed")
+        if not isinstance(value, str) or len(value) > MAX_LABEL_CHARS:
+            raise ToolError("text too long")
     if call.service == "turn_on" and "brightness" in call.data:
         b = call.data["brightness"]
         if isinstance(b, bool) or not isinstance(b, int) or not 1 <= b <= 255:

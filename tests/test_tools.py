@@ -28,7 +28,7 @@ DESK = "light.desk_light_desk_light"
 def test_dial_toolset():
     assert set(TOOLS) == {
         "light_on", "light_off", "light_toggle", "light_set_brightness",
-        "button_press", "number_set", "timer_start", "vacuum_start",
+        "button_press", "number_set", "timer_start", "timer_cancel", "vacuum_start",
         "vacuum_clean_room", "get_state", "list_entities",
     }
     assert len(OPTS.rooms) == 7 and OPTS.rooms["bedroom"] == 19
@@ -166,3 +166,73 @@ async def test_mcp_protocol():
     assert (await _rpc({"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "zz"}}))["error"]["code"] == -32602
     assert (await _rpc([{"jsonrpc": "2.0"}]))["error"]["code"] == -32600
     assert (await _rpc({"id": 1}))["error"]["code"] == -32600
+
+
+LABEL = "input_text.leela_timer_label"
+LOPTS = parse_options({"timers": ["timer.leela"], "timer_label": LABEL})
+LTOOLS = build_tools(LOPTS)
+
+
+def test_timer_toolset_with_label():
+    assert set(LTOOLS) == {
+        "timer_start", "timer_cancel", "timer_label_set", "get_state", "list_entities",
+    }
+    assert LABEL in LOPTS.readable()
+
+
+def test_timer_start_custom_duration():
+    p = LTOOLS["timer_start"].plan({"timer": "timer.leela", "seconds": 20 * 60})
+    assert p == ServiceCall("timer", "start", {"entity_id": "timer.leela", "duration": "00:20:00"})
+    check_call(LOPTS, p)
+    p = LTOOLS["timer_start"].plan({"timer": "timer.leela", "seconds": 3 * 3600 + 5})
+    assert p.data["duration"] == "03:00:05"
+    p = LTOOLS["timer_start"].plan({"timer": "timer.leela"})
+    assert p.data == {"entity_id": "timer.leela"}
+
+
+@pytest.mark.parametrize("seconds", [0, -5, 86401, 1.5, True, "20"])
+def test_timer_start_rejects_bad_seconds(seconds):
+    with pytest.raises(ToolError):
+        LTOOLS["timer_start"].plan({"timer": "timer.leela", "seconds": seconds})
+
+
+def test_timer_cancel_plan():
+    p = LTOOLS["timer_cancel"].plan({"timer": "timer.leela"})
+    assert p == ServiceCall("timer", "cancel", {"entity_id": "timer.leela"})
+    check_call(LOPTS, p)
+
+
+def test_label_set_and_clear():
+    p = LTOOLS["timer_label_set"].plan({"text": "  pasta\n  time "})
+    assert p == ServiceCall("input_text", "set_value", {"entity_id": LABEL, "value": "pasta time"})
+    check_call(LOPTS, p)
+    assert LTOOLS["timer_label_set"].plan({"text": ""}).data["value"] == ""
+
+
+@pytest.mark.parametrize("text", ["x" * 61, 5, None])
+def test_label_rejects_bad_text(text):
+    with pytest.raises(ToolError):
+        LTOOLS["timer_label_set"].plan({"text": text})
+
+
+def test_no_label_tool_without_label_entity():
+    assert "timer_label_set" not in TOOLS
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        ServiceCall("timer", "start", {"entity_id": "timer.leela", "duration": "99:99:99"}),
+        ServiceCall("timer", "start", {"entity_id": "timer.leela", "duration": "00:00:00"}),
+        ServiceCall("timer", "start", {"entity_id": "timer.leela", "duration": "25:00:00"}),
+        ServiceCall("timer", "start", {"entity_id": "timer.leela", "duration": 600}),
+        ServiceCall("timer", "start", {"entity_id": "timer.other", "duration": "00:10:00"}),
+        ServiceCall("timer", "start", {"entity_id": "timer.leela", "duration": "00:10:00", "extra": 1}),
+        ServiceCall("input_text", "set_value", {"entity_id": "input_text.other", "value": "x"}),
+        ServiceCall("input_text", "set_value", {"entity_id": LABEL, "value": "x" * 61}),
+        ServiceCall("input_text", "set_value", {"entity_id": LABEL, "value": 5}),
+    ],
+)
+def test_check_call_blocks_timer_abuse(call):
+    with pytest.raises(ToolError):
+        check_call(LOPTS, call)

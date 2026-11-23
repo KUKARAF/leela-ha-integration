@@ -157,3 +157,51 @@ async def test_config_flow_and_options(hass):
 
     res = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
     assert res["type"] == data_entry_flow.FlowResultType.ABORT
+
+
+TIMER_OPTS = {"timers": ["timer.leela"], "timer_label": "input_text.leela_timer_label"}
+
+
+async def test_timer_tools_start_label_and_cancel(hass, hass_client_no_auth):
+    await async_setup_component(hass, "http", {})
+    await _setup(hass, dict(TIMER_OPTS))
+    start = async_mock_service(hass, "timer", "start")
+    cancel = async_mock_service(hass, "timer", "cancel")
+    text = async_mock_service(hass, "input_text", "set_value")
+    c = await hass_client_no_auth()
+
+    r = await c.post(API_PATH, json=_call("timer_label_set", {"text": "pasta"}), headers=H)
+    assert (await r.json())["result"]["isError"] is False
+    assert text[0].data == {"entity_id": "input_text.leela_timer_label", "value": "pasta"}
+
+    r = await c.post(API_PATH, json=_call("timer_start", {"timer": "timer.leela", "seconds": 1200}), headers=H)
+    assert (await r.json())["result"]["isError"] is False
+    assert start[0].data == {"entity_id": "timer.leela", "duration": "00:20:00"}
+
+    r = await c.post(API_PATH, json=_call("timer_cancel", {"timer": "timer.leela"}), headers=H)
+    assert (await r.json())["result"]["isError"] is False
+    assert len(cancel) == 1
+
+
+async def test_label_clears_when_timer_ends(hass):
+    await _setup(hass, dict(TIMER_OPTS))
+    text = async_mock_service(hass, "input_text", "set_value")
+
+    hass.bus.async_fire("timer.finished", {"entity_id": "timer.leela"})
+    await hass.async_block_till_done()
+    hass.bus.async_fire("timer.cancelled", {"entity_id": "timer.leela"})
+    await hass.async_block_till_done()
+    assert [c.data["value"] for c in text] == ["", ""]
+
+    # A timer that is not on the allowlist never touches the label.
+    hass.bus.async_fire("timer.finished", {"entity_id": "timer.egg"})
+    await hass.async_block_till_done()
+    assert len(text) == 2
+
+
+async def test_no_label_clear_without_label_entity(hass):
+    await _setup(hass, {"timers": ["timer.leela"]})
+    text = async_mock_service(hass, "input_text", "set_value")
+    hass.bus.async_fire("timer.finished", {"entity_id": "timer.leela"})
+    await hass.async_block_till_done()
+    assert text == []

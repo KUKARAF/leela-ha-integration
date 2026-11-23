@@ -22,6 +22,7 @@ from .const import (
     CONF_ROOMS,
     CONF_SECRET,
     CONF_SENSORS,
+    CONF_TIMER_LABEL,
     CONF_TIMERS,
     CONF_VACUUM,
     DEFAULT_RATE_LIMIT,
@@ -48,6 +49,9 @@ def _options_schema(cur: dict[str, Any], with_regen: bool) -> vol.Schema:
         vol.Optional(CONF_BUTTONS, description=d(CONF_BUTTONS, [])): _multi(["button", "input_button"]),
         vol.Optional(CONF_NUMBERS, description=d(CONF_NUMBERS, [])): _multi(["number", "input_number"]),
         vol.Optional(CONF_TIMERS, description=d(CONF_TIMERS, [])): _multi(["timer"]),
+        vol.Optional(CONF_TIMER_LABEL, description=d(CONF_TIMER_LABEL, None)): selector.EntitySelector(
+            selector.EntitySelectorConfig(domain="input_text")
+        ),
         vol.Optional(CONF_VACUUM, description=d(CONF_VACUUM, None)): selector.EntitySelector(
             selector.EntitySelectorConfig(domain="vacuum")
         ),
