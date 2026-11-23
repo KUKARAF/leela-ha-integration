@@ -4,10 +4,10 @@
   "codeowners": [],
   "config_flow": true,
   "dependencies": ["http"],
-  "documentation": "https://github.com/rafa/leela-ha-integration",
+  "documentation": "https://github.com/KUKARAF/leela-ha-integration",
   "integration_type": "service",
   "iot_class": "calculated",
-  "issue_tracker": "https://github.com/rafa/leela-ha-integration/issues",
+  "issue_tracker": "https://github.com/KUKARAF/leela-ha-integration/issues",
   "requirements": [],
   "single_config_entry": true,
   "version": "0.1.0"
